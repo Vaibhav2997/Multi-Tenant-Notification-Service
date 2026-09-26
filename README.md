@@ -26,7 +26,6 @@ The exact scope and deferred features are documented in [MVP requirements](docs/
 - [Data model and table rationale](docs/data-model.md)
 - [API guide](docs/api-guide.md)
 - [Testing strategy](docs/testing.md)
-- [Video demo script](docs/demo-script.md)
 - [AI/skills record](docs/skills-used.md)
 - [Development instructions](AGENTS.md)
 

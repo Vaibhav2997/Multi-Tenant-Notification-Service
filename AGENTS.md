@@ -43,6 +43,7 @@ Feature packages may depend on `shared`. Delivery may depend on tenant and templ
 
 - Keep `README.md`, this file, migrations, test fixtures, and `docs/skills-used.md` in the repository.
 - Make small, descriptive commits during development. Do not commit secrets, generated build output, IDE state, or local database files.
+- Keep committed documentation self-contained. Do not rely on inaccessible assignments, prior chats, local-only files, or unspecified external references; state the relevant context, assumptions, and rationale in the document itself.
 - In the demo, explain the feature boundaries, security model, delivery state machine, rate-limiting/fairness approach, retry/idempotency guarantees, and test strategy.
 
 ## AI development record

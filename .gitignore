@@ -10,6 +10,7 @@ build/
 .env.*
 !.env.example
 docs/demo-script.md
+docs/solution-walkthrough.md
 *.log
 *.pem
 *.key
