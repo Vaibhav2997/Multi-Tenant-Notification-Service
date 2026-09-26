@@ -1,5 +1,18 @@
 # Architecture
 
+## Solution at a glance
+
+This is a multi-tenant notification platform for platform administrators and tenant administrators. It accepts tenant-defined templates and immediate or UTC-scheduled recipient batches, then delivers work through a bounded, fair dispatcher while retaining a durable audit history.
+
+The design is driven by four priorities:
+
+1. Tenant isolation: one tenant must never read, configure, or deliver against another tenant's data.
+2. Delivery correctness: an accepted message has immutable rendered content, controlled state transitions, and a durable history.
+3. Safe retries: both clients and workers can repeat work without creating an unintended duplicate.
+4. Fair bounded execution: a busy tenant cannot consume unbounded memory or monopolize available workers.
+
+The solution is intentionally a production-minded single-instance modular monolith. It provides strong transactional guarantees within one deployment and makes multi-instance limitations explicit rather than implying distributed guarantees it does not implement.
+
 ## Modular monolith
 
 The service is a single deployable Spring Boot application organized by feature. Each feature contains `api`, `application`, `domain`, and `infrastructure` packages.
@@ -41,11 +54,47 @@ The four features are:
 
 `shared` contains only HTTP error handling, pagination, OpenAPI configuration, and the UTC clock.
 
+### Component responsibilities
+
+| Component | Responsibility | Boundary it protects |
+| --- | --- | --- |
+| Auth | Password verification, JWT creation/parsing, and current principal. | A request gets one authenticated role and, for tenant users, one tenant identity. |
+| Tenant | Tenant lifecycle, channel configuration, global policy, and tenant rate override. | Platform-wide actions remain separate from tenant operations. |
+| Template | Tenant-owned, mutable source templates and variable validation/rendering. | Later template edits cannot alter delivery snapshots. |
+| Delivery | Idempotent submission, batches, deliveries, attempts, events, reports, retries, and state rules. | The delivery lifecycle is centralized instead of scattered across controllers or providers. |
+| Dispatcher | Due-work selection, tenant rotation, bounded task submission, and rate-limit coordination. | One tenant cannot consume all worker capacity. |
+| Provider adapter | Translation from a stable delivery command to a provider call. | Provider behavior and duplicate protection do not leak into domain logic. |
+| PostgreSQL | Tenant ownership, policy, submissions, delivery state, and audit records. | Relationships and uniqueness rules are enforced durably, not only in memory. |
+
 ### Why a modular monolith
 
 The assignment needs transactional delivery handling, role-based access, scheduled work, and durable audit history, but does not require distributed systems. A single Spring Boot deployment avoids network calls and distributed transactions between auth, templates, and delivery. Feature packages still prevent an unstructured monolith and leave clear seams for future provider or scaling changes.
 
 API code validates HTTP input and delegates; application services own use cases and transactions; domain code holds entities and state rules; infrastructure implements persistence, JWT parsing, scheduling, and provider behavior. Template does not depend on delivery, so delivery lifecycle complexity cannot leak into template editing.
+
+## Tenant isolation and security model
+
+There are two roles. PLATFORM_ADMIN manages tenants, tenant administrators, global policy, and tenant-specific rate overrides. TENANT_ADMIN manages only its own channel configuration and templates, submits batches, and reads its own delivery reports.
+
+~~~mermaid
+flowchart LR
+    Platform[Platform admin JWT] --> PlatformApi[Platform administration API]
+    Tenant[Tenant admin JWT] --> TenantApi[Tenant API]
+    PlatformApi --> Policy[Tenants and delivery policy]
+    TenantApi --> PrincipalTenant[Authenticated tenant identity]
+    PrincipalTenant --> ScopedServices[Tenant-scoped application services]
+    ScopedServices --> TenantRows[(Rows for that tenant only)]
+~~~
+
+Tenant endpoints derive ownership from the authenticated principal; a caller does not supply a tenant ID to establish access. Every tenant-owned lookup filters or verifies that identity, and a cross-tenant resource probe is returned as not found. This avoids both unauthorized data access and unnecessary disclosure that another tenant's resource exists.
+
+JWT is used because the system has only two administrator roles and no requirement for OAuth, SSO, or MFA. The signing secret is runtime-injected, never part of the application source, and the service does not log tokens, passwords, rendered bodies, or provider credentials.
+
+## Why relational persistence
+
+PostgreSQL is a deliberate architectural choice rather than a generic database default. The workflow has strong relationships and consistency constraints: tenants own users, templates, channels, batches, and deliveries; deliveries own attempts and events; and a tenant plus idempotency key must be unique. Submission and completion update related records atomically.
+
+Foreign keys, unique constraints, indexes, joins, and ACID transactions make those rules declarative and make tenant-scoped reporting direct. A document store could represent the same objects, but would move important integrity rules into application code and make delivery and audit queries less natural. Flyway versions the schema so the persistence contract is reviewable and repeatable across environments.
 
 ## Submission flow
 
@@ -135,12 +184,33 @@ The worker count and queue capacity are fixed configuration values. The dispatch
 
 The MVP targets one application instance. A future multi-instance design would add database leases or `SKIP LOCKED` claiming.
 
+### How fair dispatch works
+
+1. On each poll, the dispatcher finds tenants with due eligible deliveries.
+2. It rotates the starting tenant from the previous poll, so the same tenant does not always win first position.
+3. It reads at most the configured burst for each tenant.
+4. A round-robin selector takes one delivery from each tenant queue at a time until executor capacity is filled.
+5. The task enters a fixed-size worker pool and bounded queue; duplicate in-process submission is suppressed.
+6. Before a worker claims provider work, the tenant token bucket must grant a token.
+
+This is fairness at selection time and rate control at processing time. It does not promise global distributed ordering, which would need a different coordination model.
+
 ## Delivery guarantees
 
 - Submission deduplication: tenant-scoped `Idempotency-Key` plus request hash.
 - Worker behavior: at-least-once.
 - Provider deduplication: stable provider key; the local provider persists accepted keys in `provider_receipts`.
 - Auditability: every provider call has an attempt row and every state change has an event row.
+
+### What the system guarantees, and what it does not
+
+| Concern | Current guarantee | Intentional non-guarantee |
+| --- | --- | --- |
+| Client retries | Tenant-scoped key plus canonical request hash returns the original batch or a conflict. | It does not deduplicate unrelated submissions with similar recipients or content. |
+| Provider retries | The provider receives a stable delivery key on each attempt. | Exactly-once delivery across an external provider is not claimed. |
+| Template history | Each accepted delivery has a rendered snapshot. | Later template edits do not retrofit already accepted messages. |
+| Audit | Provider attempts and valid status transitions are persisted. | This is not a full observability or analytics platform. |
+| Concurrency | Worker count and queue are bounded, with rotating tenant selection. | Multi-instance claiming, locking, and global fairness are not implemented. |
 
 ### Explicit trade-offs
 
