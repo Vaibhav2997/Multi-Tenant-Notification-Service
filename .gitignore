@@ -9,6 +9,7 @@ build/
 .env
 .env.*
 !.env.example
+docs/demo-script.md
 *.log
 *.pem
 *.key

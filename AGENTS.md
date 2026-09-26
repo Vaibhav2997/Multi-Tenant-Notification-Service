@@ -47,4 +47,4 @@ Feature packages may depend on `shared`. Delivery may depend on tenant and templ
 
 ## AI development record
 
-Codex was used to inspect the starter, plan the domain model, implement the service, and create tests/documentation. No reusable Codex skill was invoked; the exact record is in `docs/skills-used.md`.
+Codex was used to inspect the starter, plan the domain model, implement the service, and create tests/documentation. The reusable local `spring-notification-architecture` skill was created for future architecture work; the exact record is in `docs/skills-used.md`.

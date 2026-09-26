@@ -65,6 +65,10 @@ export NOTIFICATION_JWT_SECRET="$(openssl rand -base64 32)"
 ./gradlew bootRun
 ```
 
+`NOTIFICATION_JWT_SECRET` is required for normal application startup. Generate a distinct value
+per environment and store it in the deployment platform's secret manager or GitHub Actions
+Secrets; never commit the value, a `.env` file containing it, or a private signing key to Git.
+
 Flyway automatically creates and validates the schema. The bootstrap account defaults to:
 
 ```text
